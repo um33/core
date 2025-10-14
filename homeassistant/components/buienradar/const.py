@@ -4,7 +4,11 @@ DOMAIN = "buienradar"
 
 DEFAULT_TIMEOUT = 60
 DEFAULT_TIMEFRAME = 60
-
+ICON_MDI_GAUGE = "mdi:gauge"
+ICON_MDI_WEATHER_WINDY = "mdi:weather-windy"
+ICON_MDI_WEATHER_POURING = "mdi:weather-pouring"
+ICON_MDI_COMPASS_OUTLINE = "mdi:compass-outline"
+ICON_MDI_WEATHER_PARTLYCLOUDY = "mdi:weather-partly-cloudy"
 DEFAULT_DIMENSION = 700
 DEFAULT_DELTA = 600
 
