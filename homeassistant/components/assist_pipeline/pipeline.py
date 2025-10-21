@@ -2039,7 +2039,7 @@ class PipelineStorageCollection(
     #     return data
     
 
-    # Refactor
+    # Refactor to not always return the same value
     async def _async_load_data(self) -> SerializedPipelineStorageCollection | None:
         """Load the data."""
         data = await super()._async_load_data()
