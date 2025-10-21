@@ -2026,7 +2026,7 @@ class PipelineStorageCollection(
 
     _preferred_item: str
 
-    # Original Code: 
+    """Original Code:"""
     # async def _async_load_data(self) -> SerializedPipelineStorageCollection | None:
     #     """Load the data."""
     #     if not (data := await super()._async_load_data()):
@@ -2039,9 +2039,9 @@ class PipelineStorageCollection(
     #     return data
     
 
-    # Refactor to not always return the same value
+    """Refactor to not always return the same value"""
+    #Refactor 1:
     async def _async_load_data(self) -> SerializedPipelineStorageCollection | None:
-        """Load the data."""
         data = await super()._async_load_data()
 
         if not data:
@@ -2057,6 +2057,33 @@ class PipelineStorageCollection(
         # Data exists — load preferred item from it
         self._preferred_item = data.get("preferred_item")
         return data
+    
+    #refactor 2:
+    """
+        async def _async_load_data(self) -> SerializedPipelineStorageCollection | None:
+        data = await super()._async_load_data()
+
+        if not data:
+            # No existing data found — create a default pipeline
+            pipeline = await _async_create_default_pipeline(self.hass, self)
+            self._preferred_item = pipeline.id
+
+            # Return consistent serialized structure
+            pipelines = []
+            if hasattr(pipeline, "serialize"):
+                try:
+                    pipelines = [pipeline.serialize()]
+                except Exception as err:
+                    _LOGGER.warning("Failed to serialize default pipeline: %s", err)
+
+            return {
+                "preferred_item": self._preferred_item,
+                "pipelines": pipelines
+            }
+        # Data exists — load preferred item from it
+        self._preferred_item = data.get("preferred_item")
+        return data
+    """
 
     async def _process_create_data(self, data: dict) -> dict:
         """Validate the config is valid."""
