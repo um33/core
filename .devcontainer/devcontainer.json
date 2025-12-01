@@ -70,5 +70,8 @@
         ]
       }
     }
-  }
+  },
+  "mounts": [
+    "source=/home/bus/ha-dev/frontend,target=/workspaces/frontend,type=bind,consistency=cached"
+  ]
 }

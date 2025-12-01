@@ -1,6 +1,7 @@
 """A shopping list todo platform."""
 
-from typing import cast
+import re
+from typing import Any, cast
 
 from homeassistant.components.todo import (
     TodoItem,
@@ -14,7 +15,59 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import NoMatchingShoppingListItem, ShoppingData
-from .const import DOMAIN
+from .const import ATTR_QUANTITY, ATTR_STORE, DEFAULT_QUANTITY, DOMAIN
+
+_STORE_RE = re.compile(r"^\s*store\s*[:=]\s*(.*)\s*$", re.IGNORECASE)
+_QTY_RE = re.compile(r"^\s*quantity\s*[:=]\s*(.*)\s*$", re.IGNORECASE)
+
+
+def _format_meta_description(store: str | None, quantity: float | None) -> str | None:
+    lines: list[str] = []
+    if store:
+        lines.append(f"Store: {store}")
+    if quantity is not None:
+        # Only show if not default OR if store exists (so user sees both)
+        if store or quantity != DEFAULT_QUANTITY:
+            # avoid "2.0" when integer
+            q_str = (
+                str(int(quantity)) if float(quantity).is_integer() else str(quantity)
+            )
+            lines.append(f"Quantity: {q_str}")
+    return "\n".join(lines) if lines else None
+
+
+def _parse_meta_description(
+    desc: str | None,
+) -> tuple[bool, bool, str | None, float | None]:
+    if not desc:
+        return False, False, None, None
+    has_store = False
+    has_qty = False
+    store: str | None = None
+    qty: float | None = None
+
+    for line in desc.splitlines():
+        m = _STORE_RE.match(line)
+        if m:
+            has_store = True
+            val = m.group(1).strip()
+            store = val or None
+            continue
+        m = _QTY_RE.match(line)
+        if m:
+            has_qty = True
+            raw = m.group(1).strip()
+            if raw:
+                try:
+                    q = float(raw)
+                    if q > 0:
+                        qty = q
+                except ValueError:
+                    pass
+            else:
+                qty = float(DEFAULT_QUANTITY)
+
+    return has_store, has_qty, store, qty
 
 
 async def async_setup_entry(
@@ -48,16 +101,32 @@ class ShoppingTodoListEntity(TodoListEntity):
 
     async def async_create_todo_item(self, item: TodoItem) -> None:
         """Add an item to the To-do list."""
+        has_store, has_qty, store, qty = _parse_meta_description(item.description)
+
+        store_val: str | None = store if has_store else None
+        quantity_val: float = (
+            qty if (has_qty and qty is not None) else float(DEFAULT_QUANTITY)
+        )
+
         await self._data.async_add(
-            item.summary, complete=(item.status == TodoItemStatus.COMPLETED)
+            item.summary or "",
+            store=store_val,
+            quantity=quantity_val,
+            complete=(item.status == TodoItemStatus.COMPLETED),
         )
 
     async def async_update_todo_item(self, item: TodoItem) -> None:
         """Update an item to the To-do list."""
-        data = {
+        data: dict[str, Any] = {
             "name": item.summary,
             "complete": item.status == TodoItemStatus.COMPLETED,
         }
+
+        has_store, has_qty, store, qty = _parse_meta_description(item.description)
+        if has_store:
+            data[ATTR_STORE] = store  # can be None to clear
+        if has_qty and qty is not None:
+            data[ATTR_QUANTITY] = qty
         try:
             await self._data.async_update(item.uid, data)
         except NoMatchingShoppingListItem as err:
@@ -93,15 +162,24 @@ class ShoppingTodoListEntity(TodoListEntity):
         """Get items in the To-do list."""
         results = []
         for item in self._data.items:
-            if cast(bool, item["complete"]):
-                status = TodoItemStatus.COMPLETED
-            else:
-                status = TodoItemStatus.NEEDS_ACTION
+            complete = cast(bool, item["complete"])
+            status = (
+                TodoItemStatus.COMPLETED if complete else TodoItemStatus.NEEDS_ACTION
+            )
+
+            store = cast(str | None, item.get("store"))
+            qty_raw = item.get("quantity", DEFAULT_QUANTITY)
+            try:
+                qty = float(cast(float, qty_raw))
+            except (ValueError, TypeError):
+                qty = float(DEFAULT_QUANTITY)
+
             results.append(
                 TodoItem(
                     summary=cast(str, item["name"]),
                     uid=cast(str, item["id"]),
                     status=status,
+                    description=_format_meta_description(store, qty),
                 )
             )
         return results
