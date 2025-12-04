@@ -23,7 +23,10 @@ from homeassistant.helpers.typing import ConfigType
 from homeassistant.util.json import JsonValueType, load_json_array
 
 from .const import (
+    ATTR_QUANTITY,
     ATTR_REVERSE,
+    ATTR_STORE,
+    DEFAULT_QUANTITY,
     DEFAULT_REVERSE,
     DOMAIN,
     EVENT_SHOPPING_LIST_UPDATED,
@@ -42,10 +45,26 @@ PLATFORMS = [Platform.TODO]
 ATTR_COMPLETE = "complete"
 
 _LOGGER = logging.getLogger(__name__)
+QUANTITY_SCHEMA = vol.All(vol.Coerce(float), vol.Range(min=0, min_included=False))
+STORE_SCHEMA = vol.Any(None, cv.string)
 CONFIG_SCHEMA = vol.Schema({DOMAIN: {}}, extra=vol.ALLOW_EXTRA)
-ITEM_UPDATE_SCHEMA = vol.Schema({ATTR_COMPLETE: bool, ATTR_NAME: str})
+ITEM_UPDATE_SCHEMA = vol.Schema(
+    {
+        vol.Optional(ATTR_COMPLETE): bool,
+        vol.Optional(ATTR_NAME): cv.string,
+        vol.Optional(ATTR_QUANTITY): QUANTITY_SCHEMA,
+        vol.Optional(ATTR_STORE): STORE_SCHEMA,
+    },
+    extra=vol.PREVENT_EXTRA,
+)
 PERSISTENCE = ".shopping_list.json"
-
+SERVICE_ADD_ITEM_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_NAME): cv.string,
+        vol.Optional(ATTR_QUANTITY, default=DEFAULT_QUANTITY): QUANTITY_SCHEMA,
+        vol.Optional(ATTR_STORE): cv.string,
+    }
+)
 SERVICE_ITEM_SCHEMA = vol.Schema({vol.Required(ATTR_NAME): cv.string})
 SERVICE_LIST_SCHEMA = vol.Schema({})
 SERVICE_SORT_SCHEMA = vol.Schema(
@@ -72,9 +91,14 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     """Set up shopping list from config flow."""
 
     async def add_item_service(call: ServiceCall) -> None:
-        """Add an item with `name`."""
-        data = hass.data[DOMAIN]
-        await data.async_add(call.data[ATTR_NAME])
+        """Add an item with `name`, optional `quantity` and `store`."""
+        data: ShoppingData = hass.data[DOMAIN]
+        await data.async_add(
+            call.data[ATTR_NAME],
+            quantity=call.data.get(ATTR_QUANTITY, DEFAULT_QUANTITY),
+            store=call.data.get(ATTR_STORE),
+            context=call.context,
+        )
 
     async def remove_item_service(call: ServiceCall) -> None:
         """Remove the first item with matching `name`."""
@@ -129,7 +153,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     await data.async_load()
 
     hass.services.async_register(
-        DOMAIN, SERVICE_ADD_ITEM, add_item_service, schema=SERVICE_ITEM_SCHEMA
+        DOMAIN, SERVICE_ADD_ITEM, add_item_service, schema=SERVICE_ADD_ITEM_SCHEMA
     )
     hass.services.async_register(
         DOMAIN, SERVICE_REMOVE_ITEM, remove_item_service, schema=SERVICE_ITEM_SCHEMA
@@ -199,50 +223,25 @@ class ShoppingData:
         self._listeners: list[Callable[[], None]] = []
 
     async def async_add(
-        self, name: str | None, complete: bool = False, context: Context | None = None
+        self,
+        name: str,
+        *,
+        quantity: float = DEFAULT_QUANTITY,
+        store: str | None = None,
+        complete: bool = False,
+        context: Context | None = None,
     ) -> dict[str, JsonValueType]:
-        """Add a shopping list item.
+        """Add a shopping list item."""
+        name = (name or "").strip()
+        store = store.strip() if store is not None else None
+        store = store or None
 
-        If an item with the same name already exists (case-insensitive, trimmed),
-        we avoid creating a duplicate:
-
-        - If the existing item is complete, we "revive" it (set complete = False).
-        - If the existing item is already active, we return it unchanged.
-        """
-        # Normalise the incoming name for duplicate detection
-        if isinstance(name, str):
-            normalized = name.strip().casefold()
-        else:
-            normalized = ""
-
-        existing: dict[str, JsonValueType] | None = None
-
-        if normalized:
-            for itm in self.items:
-                existing_name = cast(str, (itm.get("name") or "")).strip().casefold()
-                if existing_name == normalized:
-                    existing = itm
-                    break
-
-        if existing is not None:
-            # If existing item is complete, "revive" it
-            if cast(bool, existing.get("complete")):
-                existing["complete"] = False
-                await self.hass.async_add_executor_job(self.save)
-                self._async_notify()
-                self.hass.bus.async_fire(
-                    EVENT_SHOPPING_LIST_UPDATED,
-                    {"action": "update", "item": existing},
-                    context=context,
-                )
-            # If already active, do nothing extra – just return it
-            return existing
-
-        # No existing item found – create a new one
         item: dict[str, JsonValueType] = {
             "name": name,
             "id": uuid.uuid4().hex,
             "complete": complete,
+            "quantity": float(quantity),
+            "store": store,
         }
         self.items.append(item)
         await self.hass.async_add_executor_job(self.save)
@@ -253,6 +252,42 @@ class ShoppingData:
             context=context,
         )
         return item
+
+    def _normalize_item(self, item: dict[str, JsonValueType]) -> bool:
+        """Ensure required keys exist. Returns True if item was modified."""
+        changed = False
+
+        if "quantity" not in item:
+            item["quantity"] = float(DEFAULT_QUANTITY)
+            changed = True
+        else:
+            try:
+                q = float(cast(float, item["quantity"]))  # may be int/float/str
+                if q <= 0:
+                    # Reset to default for invalid quantity
+                    item["quantity"] = float(DEFAULT_QUANTITY)
+                    changed = True
+                elif item["quantity"] != q:
+                    item["quantity"] = q
+                    changed = True
+            except (ValueError, TypeError):
+                item["quantity"] = float(DEFAULT_QUANTITY)
+                changed = True
+
+        if "store" not in item:
+            item["store"] = None
+            changed = True
+        else:
+            s = item["store"]
+            if s is None:
+                return changed
+            s2 = str(s).strip()
+            s2_normalized: str | None = s2 or None
+            if item["store"] != s2_normalized:
+                item["store"] = s2_normalized
+                changed = True
+
+        return changed
 
     async def async_remove(
         self, item_id: str, context: Context | None = None
@@ -326,7 +361,12 @@ class ShoppingData:
             raise NoMatchingShoppingListItem
 
         info = ITEM_UPDATE_SCHEMA(info)
+        if ATTR_STORE in info:
+            store = cast(str | None, info[ATTR_STORE])
+            store = store.strip() if isinstance(store, str) else None
+            info[ATTR_STORE] = store or None
         item.update(info)
+        self._normalize_item(item)
         await self.hass.async_add_executor_job(self.save)
         self._async_notify()
         self.hass.bus.async_fire(
@@ -444,6 +484,12 @@ class ShoppingData:
             )
 
         self.items = await self.hass.async_add_executor_job(load)
+        changed = False
+        for itm in self.items:
+            changed |= self._normalize_item(itm)
+
+        if changed:
+            await self.hass.async_add_executor_job(self.save)
 
     def save(self) -> None:
         """Save the items."""
@@ -502,11 +548,23 @@ class CreateShoppingListItemView(http.HomeAssistantView):
     url = "/api/shopping_list/item"
     name = "api:shopping_list:item"
 
-    @RequestDataValidator(vol.Schema({vol.Required("name"): str}))
+    @RequestDataValidator(
+        vol.Schema(
+            {
+                vol.Required("name"): str,
+                vol.Optional("quantity", default=DEFAULT_QUANTITY): QUANTITY_SCHEMA,
+                vol.Optional("store"): str,
+            }
+        )
+    )
     async def post(self, request: web.Request, data: dict[str, str]) -> web.Response:
         """Create a new shopping list item."""
         hass = request.app[http.KEY_HASS]
-        item = await hass.data[DOMAIN].async_add(data["name"])
+        item = await hass.data[DOMAIN].async_add(
+            data["name"],
+            quantity=data.get("quantity", DEFAULT_QUANTITY),
+            store=data.get("store"),
+        )
         return self.json(item)
 
 
@@ -537,7 +595,12 @@ def websocket_handle_items(
 
 
 @websocket_api.websocket_command(
-    {vol.Required("type"): "shopping_list/items/add", vol.Required("name"): str}
+    {
+        vol.Required("type"): "shopping_list/items/add",
+        vol.Required("name"): str,
+        vol.Optional("quantity", default=DEFAULT_QUANTITY): QUANTITY_SCHEMA,
+        vol.Optional("store"): str,
+    }
 )
 @websocket_api.async_response
 async def websocket_handle_add(
@@ -547,7 +610,10 @@ async def websocket_handle_add(
 ) -> None:
     """Handle adding item to shopping_list."""
     item = await hass.data[DOMAIN].async_add(
-        msg["name"], context=connection.context(msg)
+        msg["name"],
+        quantity=msg.get("quantity", DEFAULT_QUANTITY),
+        store=msg.get("store"),
+        context=connection.context(msg),
     )
     connection.send_message(websocket_api.result_message(msg["id"], item))
 
@@ -583,6 +649,8 @@ async def websocket_handle_remove(
         vol.Required("item_id"): str,
         vol.Optional("name"): str,
         vol.Optional("complete"): bool,
+        vol.Optional("quantity"): QUANTITY_SCHEMA,
+        vol.Optional("store"): STORE_SCHEMA,
     }
 )
 @websocket_api.async_response

@@ -7,6 +7,11 @@ DOMAIN = "shopping_list"
 
 ATTR_REVERSE = "reverse"
 
+ATTR_QUANTITY = "quantity"
+ATTR_STORE = "store"
+DEFAULT_QUANTITY = 1
+
+
 DEFAULT_REVERSE = False
 
 SERVICE_ADD_ITEM = "add_item"
