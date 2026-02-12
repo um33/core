@@ -134,6 +134,109 @@ def _async_local_fallback_intent_filter(result: RecognizeResult) -> bool:
 
 
 @callback
+# def _async_resolve_default_pipeline_settings(
+#     hass: HomeAssistant,
+#     *,
+#     conversation_engine_id: str | None = None,
+#     stt_engine_id: str | None = None,
+#     tts_engine_id: str | None = None,
+#     pipeline_name: str,
+# ) -> dict[str, str | None]:
+#     """Resolve settings for a default pipeline.
+
+#     The default pipeline will use the homeassistant conversation agent and the
+#     default stt / tts engines if none are specified.
+#     """
+#     conversation_language = "en"
+#     pipeline_language = "en"
+#     stt_engine = None
+#     stt_language = None
+#     tts_engine = None
+#     tts_language = None
+#     tts_voice = None
+#     wake_word_entity = None
+#     wake_word_id = None
+
+#     if conversation_engine_id is None:
+#         conversation_engine_id = conversation.HOME_ASSISTANT_AGENT
+
+#     # Find a matching language supported by the Home Assistant conversation agent
+#     conversation_languages = language_util.matches(
+#         hass.config.language,
+#         conversation.async_get_conversation_languages(hass, conversation_engine_id),
+#         country=hass.config.country,
+#     )
+#     if conversation_languages:
+#         pipeline_language = hass.config.language
+#         conversation_language = conversation_languages[0]
+
+#     if stt_engine_id is None:
+#         stt_engine_id = stt.async_default_engine(hass)
+
+#     if stt_engine_id is not None:
+#         stt_engine = stt.async_get_speech_to_text_engine(hass, stt_engine_id)
+#         if stt_engine is None:
+#             stt_engine_id = None
+
+#     if stt_engine:
+#         stt_languages = language_util.matches(
+#             pipeline_language,
+#             stt_engine.supported_languages,
+#             country=hass.config.country,
+#         )
+#         if stt_languages:
+#             stt_language = stt_languages[0]
+#         else:
+#             _LOGGER.debug(
+#                 "Speech-to-text engine '%s' does not support language '%s'",
+#                 stt_engine_id,
+#                 pipeline_language,
+#             )
+#             stt_engine_id = None
+
+#     if tts_engine_id is None:
+#         tts_engine_id = tts.async_default_engine(hass)
+
+#     if tts_engine_id is not None:
+#         tts_engine = tts.get_engine_instance(hass, tts_engine_id)
+#         if tts_engine is None:
+#             tts_engine_id = None
+
+#     if tts_engine:
+#         tts_languages = language_util.matches(
+#             pipeline_language,
+#             tts_engine.supported_languages,
+#             country=hass.config.country,
+#         )
+#         if tts_languages:
+#             tts_language = tts_languages[0]
+#             tts_voices = tts_engine.async_get_supported_voices(tts_language)
+#             if tts_voices:
+#                 tts_voice = tts_voices[0].voice_id
+#         else:
+#             _LOGGER.debug(
+#                 "Text-to-speech engine '%s' does not support language '%s'",
+#                 tts_engine_id,
+#                 pipeline_language,
+#             )
+#             tts_engine_id = None
+
+#     return {
+#         "conversation_engine": conversation_engine_id,
+#         "conversation_language": conversation_language,
+#         "language": hass.config.language,
+#         "name": pipeline_name,
+#         "stt_engine": stt_engine_id,
+#         "stt_language": stt_language,
+#         "tts_engine": tts_engine_id,
+#         "tts_language": tts_language,
+#         "tts_voice": tts_voice,
+#         "wake_word_entity": wake_word_entity,
+#         "wake_word_id": wake_word_id,
+#     }
+
+#Refactor
+
 def _async_resolve_default_pipeline_settings(
     hass: HomeAssistant,
     *,
@@ -144,96 +247,80 @@ def _async_resolve_default_pipeline_settings(
 ) -> dict[str, str | None]:
     """Resolve settings for a default pipeline.
 
-    The default pipeline will use the homeassistant conversation agent and the
-    default stt / tts engines if none are specified.
+    The default pipeline will use the Home Assistant conversation agent
+    and the default STT/TTS engines if none are specified.
     """
-    conversation_language = "en"
-    pipeline_language = "en"
-    stt_engine = None
-    stt_language = None
-    tts_engine = None
-    tts_language = None
-    tts_voice = None
-    wake_word_entity = None
-    wake_word_id = None
+    pipeline_language = hass.config.language or "en"
+    conversation_language = pipeline_language
 
-    if conversation_engine_id is None:
-        conversation_engine_id = conversation.HOME_ASSISTANT_AGENT
+    # --- Resolve conversation engine ---
+    conversation_engine_id = conversation_engine_id or conversation.HOME_ASSISTANT_AGENT
+    conversation_language = _resolve_conversation_language(hass, conversation_engine_id, pipeline_language)
 
-    # Find a matching language supported by the Home Assistant conversation agent
-    conversation_languages = language_util.matches(
-        hass.config.language,
-        conversation.async_get_conversation_languages(hass, conversation_engine_id),
-        country=hass.config.country,
-    )
-    if conversation_languages:
-        pipeline_language = hass.config.language
-        conversation_language = conversation_languages[0]
+    # --- Resolve STT and TTS engines ---
+    stt_engine_id, stt_engine, stt_language = _resolve_stt_engine(hass, stt_engine_id, pipeline_language)
+    tts_engine_id, tts_engine, tts_language, tts_voice = _resolve_tts_engine(hass, tts_engine_id, pipeline_language)
 
-    if stt_engine_id is None:
-        stt_engine_id = stt.async_default_engine(hass)
-
-    if stt_engine_id is not None:
-        stt_engine = stt.async_get_speech_to_text_engine(hass, stt_engine_id)
-        if stt_engine is None:
-            stt_engine_id = None
-
-    if stt_engine:
-        stt_languages = language_util.matches(
-            pipeline_language,
-            stt_engine.supported_languages,
-            country=hass.config.country,
-        )
-        if stt_languages:
-            stt_language = stt_languages[0]
-        else:
-            _LOGGER.debug(
-                "Speech-to-text engine '%s' does not support language '%s'",
-                stt_engine_id,
-                pipeline_language,
-            )
-            stt_engine_id = None
-
-    if tts_engine_id is None:
-        tts_engine_id = tts.async_default_engine(hass)
-
-    if tts_engine_id is not None:
-        tts_engine = tts.get_engine_instance(hass, tts_engine_id)
-        if tts_engine is None:
-            tts_engine_id = None
-
-    if tts_engine:
-        tts_languages = language_util.matches(
-            pipeline_language,
-            tts_engine.supported_languages,
-            country=hass.config.country,
-        )
-        if tts_languages:
-            tts_language = tts_languages[0]
-            tts_voices = tts_engine.async_get_supported_voices(tts_language)
-            if tts_voices:
-                tts_voice = tts_voices[0].voice_id
-        else:
-            _LOGGER.debug(
-                "Text-to-speech engine '%s' does not support language '%s'",
-                tts_engine_id,
-                pipeline_language,
-            )
-            tts_engine_id = None
-
+    # --- Return merged settings ---
     return {
         "conversation_engine": conversation_engine_id,
         "conversation_language": conversation_language,
-        "language": hass.config.language,
-        "name": pipeline_name,
+        "pipeline_language": pipeline_language,
         "stt_engine": stt_engine_id,
         "stt_language": stt_language,
         "tts_engine": tts_engine_id,
         "tts_language": tts_language,
         "tts_voice": tts_voice,
-        "wake_word_entity": wake_word_entity,
-        "wake_word_id": wake_word_id,
+        "wake_word_entity": None,
+        "wake_word_id": None,
+        "name": pipeline_name,
     }
+
+def _resolve_conversation_language(hass: HomeAssistant, engine_id: str, pipeline_language: str) -> str:
+    """Find best matching language for the conversation engine."""
+    supported = conversation.async_get_conversation_languages(hass, engine_id)
+    matched = language_util.matches(hass.config.language, supported, country=hass.config.country)
+    return matched[0] if matched else pipeline_language
+
+def _resolve_stt_engine(hass: HomeAssistant, engine_id: str | None, pipeline_language: str):
+    """Resolve speech-to-text engine and matching language."""
+    engine_id = engine_id or stt.async_default_engine(hass)
+    engine = stt.async_get_speech_to_text_engine(hass, engine_id) if engine_id else None
+    if not engine:
+        return None, None, None
+
+    matched = language_util.matches(pipeline_language, engine.supported_languages, country=hass.config.country)
+    if not matched:
+        _LOGGER.debug(
+            "Speech-to-text engine '%s' does not support language '%s'",
+            engine_id,
+            pipeline_language,
+        )
+        return None, None, None
+
+    return engine_id, engine, matched[0]
+
+def _resolve_tts_engine(hass: HomeAssistant, engine_id: str | None, pipeline_language: str):
+    """Resolve text-to-speech engine, language, and voice."""
+    engine_id = engine_id or tts.async_default_engine(hass)
+    engine = tts.get_engine_instance(hass, engine_id) if engine_id else None
+    if not engine:
+        return None, None, None, None
+
+    matched = language_util.matches(pipeline_language, engine.supported_languages, country=hass.config.country)
+    if not matched:
+        _LOGGER.debug(
+            "Text-to-speech engine '%s' does not support language '%s'",
+            engine_id,
+            pipeline_language,
+        )
+        return None, None, None, None
+
+    language = matched[0]
+    voices = engine.async_get_supported_voices(language)
+    voice_id = voices[0].voice_id if voices else None
+
+    return engine_id, engine, language, voice_id
 
 
 async def _async_create_default_pipeline(
@@ -1935,73 +2022,155 @@ class PipelineInput:
             # thread, etc.
             await self.run.end()
 
+    # async def validate(self) -> None:
+    #     """Validate pipeline input against start stage."""
+    #     if self.run.start_stage in (PipelineStage.WAKE_WORD, PipelineStage.STT):
+    #         if self.run.pipeline.stt_engine is None:
+    #             raise PipelineRunValidationError(
+    #                 "the pipeline does not support speech-to-text"
+    #             )
+    #         if self.stt_metadata is None:
+    #             raise PipelineRunValidationError(
+    #                 "stt_metadata is required for speech-to-text"
+    #             )
+    #         if self.stt_stream is None:
+    #             raise PipelineRunValidationError(
+    #                 "stt_stream is required for speech-to-text"
+    #             )
+    #     elif self.run.start_stage == PipelineStage.INTENT:
+    #         if self.intent_input is None:
+    #             raise PipelineRunValidationError(
+    #                 "intent_input is required for intent recognition"
+    #             )
+    #     elif self.run.start_stage == PipelineStage.TTS:
+    #         if self.tts_input is None:
+    #             raise PipelineRunValidationError(
+    #                 "tts_input is required for text-to-speech"
+    #             )
+    #     if self.run.end_stage == PipelineStage.TTS:
+    #         if self.run.pipeline.tts_engine is None:
+    #             raise PipelineRunValidationError(
+    #                 "the pipeline does not support text-to-speech"
+    #             )
+
+        # start_stage_index = PIPELINE_STAGE_ORDER.index(self.run.start_stage)
+        # end_stage_index = PIPELINE_STAGE_ORDER.index(self.run.end_stage)
+
+        # prepare_tasks = []
+
+        # if (
+        #     start_stage_index
+        #     <= PIPELINE_STAGE_ORDER.index(PipelineStage.WAKE_WORD)
+        #     <= end_stage_index
+        # ):
+        #     prepare_tasks.append(self.run.prepare_wake_word_detection())
+
+        # if (
+        #     start_stage_index
+        #     <= PIPELINE_STAGE_ORDER.index(PipelineStage.STT)
+        #     <= end_stage_index
+        # ):
+        #     # self.stt_metadata can't be None or we'd raise above
+        #     prepare_tasks.append(self.run.prepare_speech_to_text(self.stt_metadata))  # type: ignore[arg-type]
+
+        # if (
+        #     start_stage_index
+        #     <= PIPELINE_STAGE_ORDER.index(PipelineStage.INTENT)
+        #     <= end_stage_index
+        # ):
+        #     prepare_tasks.append(self.run.prepare_recognize_intent(self.session))
+
+        # if (
+        #     start_stage_index
+        #     <= PIPELINE_STAGE_ORDER.index(PipelineStage.TTS)
+        #     <= end_stage_index
+        # ):
+        #     prepare_tasks.append(self.run.prepare_text_to_speech())
+
+        # if prepare_tasks:
+        #     await asyncio.gather(*prepare_tasks)
+            
+    # Refactor
     async def validate(self) -> None:
-        """Validate pipeline input against start stage."""
-        if self.run.start_stage in (PipelineStage.WAKE_WORD, PipelineStage.STT):
-            if self.run.pipeline.stt_engine is None:
-                raise PipelineRunValidationError(
-                    "the pipeline does not support speech-to-text"
-                )
-            if self.stt_metadata is None:
-                raise PipelineRunValidationError(
-                    "stt_metadata is required for speech-to-text"
-                )
-            if self.stt_stream is None:
-                raise PipelineRunValidationError(
-                    "stt_stream is required for speech-to-text"
-                )
-        elif self.run.start_stage == PipelineStage.INTENT:
-            if self.intent_input is None:
-                raise PipelineRunValidationError(
-                    "intent_input is required for intent recognition"
-                )
-        elif self.run.start_stage == PipelineStage.TTS:
-            if self.tts_input is None:
-                raise PipelineRunValidationError(
-                    "tts_input is required for text-to-speech"
-                )
-        if self.run.end_stage == PipelineStage.TTS:
-            if self.run.pipeline.tts_engine is None:
-                raise PipelineRunValidationError(
-                    "the pipeline does not support text-to-speech"
-                )
+        """Validate pipeline input against start and end stages."""
+        start_stage = self.run.start_stage
+        end_stage = self.run.end_stage
+        pipeline = self.run.pipeline
 
-        start_stage_index = PIPELINE_STAGE_ORDER.index(self.run.start_stage)
-        end_stage_index = PIPELINE_STAGE_ORDER.index(self.run.end_stage)
+        # --- Validate stage inputs ---
+        await self._validate_stage_inputs(start_stage, pipeline)
 
+        # --- Validate TTS support if used ---
+        if end_stage == PipelineStage.TTS and pipeline.tts_engine is None:
+            raise PipelineRunValidationError("the pipeline does not support text-to-speech")
+
+        # --- Prepare all required stages ---
+        await self._prepare_stages(start_stage, end_stage)
+
+    async def _validate_stage_inputs(self, start_stage: PipelineStage, pipeline) -> None:
+        """Validate required inputs for the given start stage."""
+        validators = {
+            PipelineStage.WAKE_WORD: self._validate_stt_stage,
+            PipelineStage.STT: self._validate_stt_stage,
+            PipelineStage.INTENT: self._validate_intent_stage,
+            PipelineStage.TTS: self._validate_tts_stage,
+        }
+
+        validator = validators.get(start_stage)
+        if validator:
+            await validator(pipeline)
+
+    async def _validate_stt_stage(self, pipeline) -> None:
+        """Validate Speech-to-Text related stages."""
+        if pipeline.stt_engine is None:
+            raise PipelineRunValidationError("the pipeline does not support speech-to-text")
+
+        if not self.stt_metadata:
+            raise PipelineRunValidationError("stt_metadata is required for speech-to-text")
+
+        if not self.stt_stream:
+            raise PipelineRunValidationError("stt_stream is required for speech-to-text")
+        
+    async def _validate_intent_stage(self, _pipeline) -> None:
+        """Validate Intent Recognition stage."""
+        if not self.intent_input:
+            raise PipelineRunValidationError("intent_input is required for intent recognition")
+        
+    async def _validate_intent_stage(self, _pipeline) -> None:
+        """Validate Intent Recognition stage."""
+        if not self.intent_input:
+            raise PipelineRunValidationError("intent_input is required for intent recognition")
+    
+    async def _validate_tts_stage(self, _pipeline) -> None:
+        """Validate Text-to-Speech stage."""
+        if not self.tts_input:
+            raise PipelineRunValidationError("tts_input is required for text-to-speech")
+        
+    async def _prepare_stages(self, start_stage: PipelineStage, end_stage: PipelineStage) -> None:
+        """Prepare all stages between start and end."""
+        start_index = PIPELINE_STAGE_ORDER.index(start_stage)
+        end_index = PIPELINE_STAGE_ORDER.index(end_stage)
         prepare_tasks = []
 
-        if (
-            start_stage_index
-            <= PIPELINE_STAGE_ORDER.index(PipelineStage.WAKE_WORD)
-            <= end_stage_index
-        ):
+        def within_range(stage: PipelineStage) -> bool:
+            idx = PIPELINE_STAGE_ORDER.index(stage)
+            return start_index <= idx <= end_index
+
+        if within_range(PipelineStage.WAKE_WORD):
             prepare_tasks.append(self.run.prepare_wake_word_detection())
 
-        if (
-            start_stage_index
-            <= PIPELINE_STAGE_ORDER.index(PipelineStage.STT)
-            <= end_stage_index
-        ):
-            # self.stt_metadata can't be None or we'd raise above
+        if within_range(PipelineStage.STT):
             prepare_tasks.append(self.run.prepare_speech_to_text(self.stt_metadata))  # type: ignore[arg-type]
 
-        if (
-            start_stage_index
-            <= PIPELINE_STAGE_ORDER.index(PipelineStage.INTENT)
-            <= end_stage_index
-        ):
+        if within_range(PipelineStage.INTENT):
             prepare_tasks.append(self.run.prepare_recognize_intent(self.session))
 
-        if (
-            start_stage_index
-            <= PIPELINE_STAGE_ORDER.index(PipelineStage.TTS)
-            <= end_stage_index
-        ):
+        if within_range(PipelineStage.TTS):
             prepare_tasks.append(self.run.prepare_text_to_speech())
 
         if prepare_tasks:
             await asyncio.gather(*prepare_tasks)
+
 
 
 class PipelinePreferred(CollectionError):
@@ -2026,19 +2195,19 @@ class PipelineStorageCollection(
 
     _preferred_item: str
 
-    # Original Code: 
-    # async def _async_load_data(self) -> SerializedPipelineStorageCollection | None:
-    #     """Load the data."""
-    #     if not (data := await super()._async_load_data()):
-    #         pipeline = await _async_create_default_pipeline(self.hass, self)
-    #         self._preferred_item = pipeline.id
-    #         return data
+    """
+    Original Code: 
+    async def _async_load_data(self) -> SerializedPipelineStorageCollection | None:
+        if not (data := await super()._async_load_data()):
+            pipeline = await _async_create_default_pipeline(self.hass, self)
+            self._preferred_item = pipeline.id
+            return data
 
-    #     self._preferred_item = data["preferred_item"]
+        self._preferred_item = data["preferred_item"]
 
-    #     return data
+        return data
     
-
+    """
     # Refactor
     async def _async_load_data(self) -> SerializedPipelineStorageCollection | None:
         """Load the data."""
