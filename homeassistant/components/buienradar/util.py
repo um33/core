@@ -70,7 +70,7 @@ class BrData:
         self.timeframe = timeframe
         self.unsub_schedule_update: CALLBACK_TYPE | None = None
 
-    async def update_devices(self):
+    def update_devices(self):
         """Update all devices/sensors."""
         if not self.devices:
             return
@@ -197,68 +197,68 @@ class BrData:
     @property
     def temperature(self):
         """Return the temperature, or None."""
-        try:
-            return float(self.data.get(TEMPERATURE))
-        except (ValueError, TypeError):
-            return None
+        return self._safe_float(TEMPERATURE)
 
     @property
     def feeltemperature(self):
         """Return the feeltemperature, or None."""
-        try:
-            return float(self.data.get(FEELTEMPERATURE))
-        except (ValueError, TypeError):
-            return None
+        return self._safe_float(FEELTEMPERATURE)
 
     @property
     def pressure(self):
         """Return the pressure, or None."""
-        try:
-            return float(self.data.get(PRESSURE))
-        except (ValueError, TypeError):
-            return None
+        return self._safe_float(PRESSURE)
 
     @property
     def humidity(self):
         """Return the humidity, or None."""
-        try:
-            return int(self.data.get(HUMIDITY))
-        except (ValueError, TypeError):
-            return None
+        return self._safe_int(HUMIDITY)
 
     @property
     def visibility(self):
         """Return the visibility, or None."""
-        try:
-            return int(self.data.get(VISIBILITY))
-        except (ValueError, TypeError):
-            return None
+        return self._safe_int(VISIBILITY)
 
     @property
     def wind_gust(self):
         """Return the windgust, or None."""
-        try:
-            return float(self.data.get(WINDGUST))
-        except (ValueError, TypeError):
-            return None
+        return self._safe_float(WINDGUST)
 
     @property
     def wind_speed(self):
         """Return the windspeed, or None."""
-        try:
-            return float(self.data.get(WINDSPEED))
-        except (ValueError, TypeError):
-            return None
+        return self._safe_float(WINDSPEED)
 
     @property
     def wind_bearing(self):
         """Return the wind bearing, or None."""
-        try:
-            return int(self.data.get(WINDAZIMUTH))
-        except (ValueError, TypeError):
-            return None
+        return self._safe_int(WINDAZIMUTH)
 
     @property
     def forecast(self):
         """Return the forecast data."""
         return self.data.get(FORECAST)
+
+    def _safe_float(self, key: str) -> float | None:
+        """Safely parse float from data, or None."""
+        if self.data is None:
+            return None
+        value = self.data.get(key)
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return None
+
+    def _safe_int(self, key: str) -> int | None:
+        """Safely parse int from data, or None."""
+        if self.data is None:
+            return None
+        value = self.data.get(key)
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return None
